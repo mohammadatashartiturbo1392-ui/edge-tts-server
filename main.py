@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import Response, JSONResponse
 import edge_tts
 import asyncio
 import io
@@ -35,20 +35,43 @@ async def tts(
     rate: str = Query(default="+0%")
 ):
     try:
-        communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
-        buf = io.BytesIO()
+        communicate = edge_tts.Communicate(
+            text=text,
+            voice=voice,
+            rate=rate
+        )
+        
+        # ✅ همه chunks رو جمع کن
+        audio_chunks = []
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
-                buf.write(chunk["data"])
-        size = buf.getbuffer().nbytes
-        print(f"Audio size: {size} for: {text[:30]}")
-        if size < 100:
-            return JSONResponse({"error": "empty", "size": size}, status_code=500)
-        buf.seek(0)
-        return StreamingResponse(
-            buf, media_type="audio/mpeg",
-            headers={"Content-Length": str(size)}
+                audio_chunks.append(chunk["data"])
+        
+        if not audio_chunks:
+            return JSONResponse(
+                {"error": "no audio chunks received"},
+                status_code=500
+            )
+        
+        # ✅ یکی کن
+        audio_data = b"".join(audio_chunks)
+        print(f"✅ Audio: {len(audio_data)} bytes | text: {text[:30]}")
+        
+        # ✅ Response مستقیم با bytes
+        return Response(
+            content=audio_data,
+            media_type="audio/mpeg",
+            headers={
+                "Content-Length": str(len(audio_data)),
+                "Cache-Control": "no-cache",
+                "Access-Control-Allow-Origin": "*"
+            }
         )
+        
     except Exception as e:
-        print(traceback.format_exc())
-        return JSONResponse({"error": str(e)}, status_code=500)
+        err = traceback.format_exc()
+        print(f"❌ Error: {err}")
+        return JSONResponse(
+            {"error": str(e), "detail": err[-300:]},
+            status_code=500
+        )
